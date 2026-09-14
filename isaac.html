@@ -4,9 +4,8 @@
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-LM67KGEJRK"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
+  function gtag(){dataLayer.push(arguments);} 
   gtag('js', new Date());
-
   gtag('config', 'G-LM67KGEJRK');
 </script>
 
@@ -14,21 +13,148 @@
     <meta http-equiv="x-ua-compatible" content="ie=edge">
     <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/AndreajnRcm4/b398dl2h74v@9a23fbb2373d743a564873251cbb57736ebc1f73/style.css" type="text/css" />
+    <style>
+      /* lightweight styles for the play button / container */
+      #container { width: 100%; height: 100vh; position: relative; background: #000; display:flex; align-items:center; justify-content:center; }
+      #playButton { background: rgba(255,255,255,0.95); border: none; padding: 14px 22px; font-size: 18px; border-radius: 8px; cursor: pointer; }
+      #playButton[disabled] { opacity: 0.6; cursor: default; }
+      #loader { position: absolute; top: 12px; right: 12px; color: #fff; font-size: 13px; display:none; }
+    </style>
 </head>
 <body>
-<!-- Official Ruffle CDN -->
-<script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
+<!-- Ruffle will be loaded on demand to avoid allocating emulator memory until needed -->
 
-<div id="container" style="width: 100%; height: 100vh;">
-    <object data="https://rawcdn.githack.com/bubbls/ugss/3eb957d7d5b10de8e9cba751f6a792ca2c355322/tboiwotl-v1.666.swf" type="application/x-shockwave-flash" width="100%" height="100%">
-    </object>
+<div id="container">
+  <div id="placeholder">
+    <button id="playButton" aria-label="Load and play" title="Load and play">Play</button>
+    <div id="loader">Loading...</div>
+  </div>
 </div>
 
 <script>
-  window.RufflePlayer = window.RufflePlayer || {};
-  window.RufflePlayer.config = {
-    polyfills: true
-  };
+  // SWF URL (kept external)
+  const SWF_URL = "https://rawcdn.githack.com/bubbls/ugss/3eb957d7d5b10de8e9cba751f6a792ca2c355322/tboiwotl-v1.666.swf";
+  const playButton = document.getElementById('playButton');
+  const loader = document.getElementById('loader');
+  const container = document.getElementById('container');
+  let scriptEl = null;
+  let swfObject = null;
+
+  function showLoader(show){ loader.style.display = show ? 'block' : 'none'; }
+
+  async function loadRuffleScript(){
+    if (scriptEl) return new Promise((resolve, reject) => {
+      if (scriptEl.readyState === 'complete' || scriptEl.readyState === 'loaded') return resolve();
+      scriptEl.addEventListener('load', () => resolve());
+      scriptEl.addEventListener('error', () => reject(new Error('Failed to load ruffle')));
+    });
+
+    return new Promise((resolve, reject) => {
+      scriptEl = document.createElement('script');
+      scriptEl.src = 'https://unpkg.com/@ruffle-rs/ruffle';
+      scriptEl.async = true;
+      scriptEl.onload = () => resolve();
+      scriptEl.onerror = () => reject(new Error('Failed to load ruffle'));
+      document.body.appendChild(scriptEl);
+    });
+  }
+
+  function insertSWFObject(){
+    // Clear placeholder
+    container.innerHTML = '';
+    // Create <object> after ruffle is loaded so the emulator only initializes now
+    swfObject = document.createElement('object');
+    swfObject.setAttribute('type', 'application/x-shockwave-flash');
+    swfObject.setAttribute('data', SWF_URL);
+    swfObject.setAttribute('width', '100%');
+    swfObject.setAttribute('height', '100%');
+    swfObject.id = 'swfObject';
+    container.appendChild(swfObject);
+  }
+
+  async function start(){
+    if (playButton.disabled) return;
+    playButton.disabled = true;
+    showLoader(true);
+
+    try{
+      // Load ruffle script on demand. Configure to avoid extra polyfills which can raise memory usage.
+      await loadRuffleScript();
+      window.RufflePlayer = window.RufflePlayer || {};
+      window.RufflePlayer.config = { polyfills: false };
+
+      // Insert the object tag after ruffle has initialized so that the emulator starts only now.
+      insertSWFObject();
+
+      // Some versions of Ruffle auto-detect existing <object> tags at load; if not, try to upgrade the object manually.
+      try {
+        if (window.RufflePlayer && typeof window.RufflePlayer.newest === 'function'){
+          const ruffle = window.RufflePlayer.newest();
+          const player = ruffle.createPlayer();
+          // Replace the object element with the ruffle player and load the SWF directly to avoid double parsing.
+          player.style.width = '100%';
+          player.style.height = '100%';
+          container.innerHTML = '';
+          container.appendChild(player);
+          player.load({ url: SWF_URL });
+        }
+      } catch (e) {
+        // If manual API not available, rely on Ruffle's automatic replacement of the <object> tag.
+        // Nothing to do here; the object element will be handled by the library.
+        console.warn('Ruffle upgrade fallback', e);
+      }
+
+    } catch (err){
+      console.error('Failed to load player:', err);
+      alert('Failed to load the player. See console for details.');
+      playButton.disabled = false;
+    } finally {
+      showLoader(false);
+    }
+  }
+
+  // Optional: provide an unload button to try to free memory without leaving the page.
+  function addUnloadControl(){
+    const btn = document.createElement('button');
+    btn.textContent = 'Unload';
+    btn.style.position = 'absolute';
+    btn.style.top = '8px';
+    btn.style.left = '8px';
+    btn.style.zIndex = 9999;
+    btn.onclick = () => {
+      // Remove SWF/object and attempt to let the browser free memory.
+      if (swfObject) {
+        try { swfObject.remove(); } catch(e){}
+        swfObject = null;
+      }
+      // If a ruffle player element exists, remove it too.
+      const players = container.querySelectorAll('ruffle-player, .ruffle-player');
+      players.forEach(p => p.remove());
+
+      // Remove the ruffle script element to hint the browser to free wasm resources (may not fully unload WASM in all browsers).
+      if (scriptEl) {
+        try { scriptEl.remove(); } catch(e){}
+        scriptEl = null;
+      }
+
+      // restore placeholder
+      container.innerHTML = '';
+      const ph = document.createElement('div');
+      ph.id = 'placeholder';
+      const pbtn = document.createElement('button');
+      pbtn.id = 'playButton';
+      pbtn.textContent = 'Play';
+      pbtn.onclick = start;
+      ph.appendChild(pbtn);
+      container.appendChild(ph);
+    };
+    document.body.appendChild(btn);
+  }
+
+  playButton.addEventListener('click', start);
+  // Add unload control but keep it minimal; user can use it to attempt to free memory.
+  addUnloadControl();
 </script>
+
 </body>
 </html>
